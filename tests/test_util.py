@@ -14,10 +14,15 @@ from yalexs.activity import (
     LockOperationActivity,
 )
 from yalexs.api import _convert_lock_result_to_activities
+from yalexs.const import Brand
 from yalexs.doorbell import DoorbellDetail
 from yalexs.lock import LockDetail, LockDoorStatus, LockStatus
+from yalexs.pubnub_activity import activities_from_pubnub_message
 from yalexs.util import (
     as_utc_from_local,
+    get_configuration_url,
+    get_latest_activity,
+    get_ssl_context,
     update_doorbell_image_from_activity,
     update_lock_detail_from_activity,
 )
@@ -28,6 +33,124 @@ def load_fixture(filename):
     path = os.path.join(os.path.dirname(__file__), "fixtures", filename)
     with open(path) as fptr:
         return fptr.read()
+
+
+def test_get_latest_activity():
+    """Test when two activities happen at the same time we prefer the one that is not moving."""
+    lock = LockDetail(json.loads(load_fixture("get_lock.doorsense_init.json")))
+    unlocking_activities = activities_from_pubnub_message(
+        lock,
+        dateutil.parser.parse("2017-12-10T05:48:30.272Z"),
+        {
+            "remoteEvent": 1,
+            "status": "kAugLockState_Unlocking",
+            "info": {
+                "action": "unlock",
+                "startTime": "2021-03-20T18:19:05.373Z",
+                "context": {
+                    "transactionID": "_oJRZKJsx",
+                    "startDate": "2021-03-20T18:19:05.371Z",
+                    "retryCount": 1,
+                },
+                "lockType": "lock_version_1001",
+                "serialNumber": "M1FBA029QJ",
+                "rssi": -53,
+                "wlanRSSI": -55,
+                "wlanSNR": 44,
+                "duration": 2534,
+            },
+        },
+    )
+    unlocked_activities = activities_from_pubnub_message(
+        lock,
+        dateutil.parser.parse("2017-12-10T05:48:30.272Z"),
+        {
+            "remoteEvent": 1,
+            "status": "kAugLockState_Unlocked",
+            "info": {
+                "action": "unlock",
+                "startTime": "2021-03-20T18:19:05.373Z",
+                "context": {
+                    "transactionID": "_oJRZKJsx",
+                    "startDate": "2021-03-20T18:19:05.371Z",
+                    "retryCount": 1,
+                },
+                "lockType": "lock_version_1001",
+                "serialNumber": "M1FBA029QJ",
+                "rssi": -53,
+                "wlanRSSI": -55,
+                "wlanSNR": 44,
+                "duration": 2534,
+            },
+        },
+    )
+    assert get_latest_activity(unlocking_activities[0], None) == unlocking_activities[0]
+    assert get_latest_activity(None, unlocked_activities[0]) == unlocked_activities[0]
+    assert (
+        get_latest_activity(unlocking_activities[0], unlocked_activities[0])
+        == unlocked_activities[0]
+    )
+    assert (
+        get_latest_activity(unlocked_activities[0], unlocking_activities[0])
+        == unlocked_activities[0]
+    )
+
+
+def test_update_lock_detail_from_activity():
+    """Test when two activities happen at the same time we prefer the one that is not moving."""
+    lock = LockDetail(json.loads(load_fixture("get_lock.doorsense_init.json")))
+    unlocking_activities = activities_from_pubnub_message(
+        lock,
+        dateutil.parser.parse("2017-12-10T05:48:30.272Z"),
+        {
+            "remoteEvent": 1,
+            "status": "kAugLockState_Unlocking",
+            "info": {
+                "action": "unlock",
+                "startTime": "2021-03-20T18:19:05.373Z",
+                "context": {
+                    "transactionID": "_oJRZKJsx",
+                    "startDate": "2021-03-20T18:19:05.371Z",
+                    "retryCount": 1,
+                },
+                "lockType": "lock_version_1001",
+                "serialNumber": "M1FBA029QJ",
+                "rssi": -53,
+                "wlanRSSI": -55,
+                "wlanSNR": 44,
+                "duration": 2534,
+            },
+        },
+    )
+    unlocked_activities = activities_from_pubnub_message(
+        lock,
+        dateutil.parser.parse("2017-12-10T05:48:30.272Z"),
+        {
+            "remoteEvent": 1,
+            "status": "kAugLockState_Unlocked",
+            "info": {
+                "action": "unlock",
+                "startTime": "2021-03-20T18:19:05.373Z",
+                "context": {
+                    "transactionID": "_oJRZKJsx",
+                    "startDate": "2021-03-20T18:19:05.371Z",
+                    "retryCount": 1,
+                },
+                "lockType": "lock_version_1001",
+                "serialNumber": "M1FBA029QJ",
+                "rssi": -53,
+                "wlanRSSI": -55,
+                "wlanSNR": 44,
+                "duration": 2534,
+            },
+        },
+    )
+    update_lock_detail_from_activity(lock, unlocking_activities[0])
+    assert lock.lock_status == LockStatus.UNLOCKING
+    update_lock_detail_from_activity(lock, unlocked_activities[0])
+    assert lock.lock_status == LockStatus.UNLOCKED
+    update_lock_detail_from_activity(lock, unlocking_activities[0])
+    assert lock.lock_status == LockStatus.UNLOCKED
 
 
 class TestLockDetail(unittest.TestCase):
@@ -266,3 +389,18 @@ class TestDetail(unittest.TestCase):
             doorbell.image_created_at_datetime,
         )
         self.assertEqual("https://my.updated.image/image.jpg", doorbell.image_url)
+
+
+def test_get_configuration_url():
+    """Test that we get the correct configuration url for the brand."""
+    assert get_configuration_url("august") == "https://account.august.com"
+    assert get_configuration_url("yale_access") == "https://account.august.com"
+    assert get_configuration_url("yale_home") == "https://account.aaecosystem.com"
+    assert get_configuration_url(Brand.AUGUST) == "https://account.august.com"
+    assert get_configuration_url(Brand.YALE_ACCESS) == "https://account.august.com"
+    assert get_configuration_url(Brand.YALE_HOME) == "https://account.aaecosystem.com"
+
+
+def test_get_ssl_context():
+    """Test getting the ssl context is cached."""
+    assert get_ssl_context() is get_ssl_context()

@@ -1,17 +1,19 @@
+from __future__ import annotations
+
 import datetime
 from enum import Enum
-from typing import List, Optional
 
-import dateutil.parser
-
-from yalexs.bridge import BridgeDetail, BridgeStatus
-from yalexs.device import Device, DeviceDetail
-from yalexs.keypad import KeypadDetail
-
+from .backports.functools import cached_property
+from .bridge import BridgeDetail, BridgeStatus
+from .device import Device, DeviceDetail
+from .keypad import KeypadDetail
+from .time import parse_datetime
 from .users import cache_user_info
 
 LOCKED_STATUS = ("locked", "kAugLockState_Locked", "kAugLockState_SecureMode")
 LOCKING_STATUS = ("kAugLockState_Locking",)
+UNLATCHED_STATUS = ("unlatched", "kAugLockState_Unlatched")
+UNLATCHING_STATUS = ("kAugLockState_Unlatching",)
 UNLOCKED_STATUS = ("unlocked", "kAugLockState_Unlocked")
 UNLOCKING_STATUS = ("kAugLockState_Unlocking",)
 JAMMED_STATUS = (
@@ -21,12 +23,18 @@ JAMMED_STATUS = (
 
 CLOSED_STATUS = ("closed", "kAugLockDoorState_Closed", "kAugDoorState_Closed")
 OPEN_STATUS = ("open", "kAugLockDoorState_Open", "kAugDoorState_Open")
-DISABLE_STATUS = ("init", "", None)
+DISABLE_STATUS = ("init", "kAugDoorState_Init", "", None)
 
 LOCK_STATUS_KEY = "status"
 DOOR_STATE_KEY = "doorState"
 
+DOORMAN_MODEL_TYPES = {7, 10}
+UNLATCH_MODEL_TYPES = {17}
 
+
+# Type 7 is a doorman
+# Type 10 is a doorman in the Swedish market
+# Type 17 is a Linus L2
 class Lock(Device):
     def __init__(self, device_id, data):
         super().__init__(
@@ -36,7 +44,7 @@ class Lock(Device):
         )
         self._user_type = data["UserType"]
 
-    @property
+    @cached_property
     def is_operable(self):
         return self._user_type == "superuser"
 
@@ -77,9 +85,7 @@ class LockDetail(DeviceDetail):
             self._door_state = determine_door_state(lock_status.get(DOOR_STATE_KEY))
 
             if "dateTime" in lock_status:
-                self._lock_status_datetime = dateutil.parser.parse(
-                    lock_status["dateTime"]
-                )
+                self._lock_status_datetime = parse_datetime(lock_status["dateTime"])
                 self._door_state_datetime = self._lock_status_datetime
 
             if (
@@ -106,19 +112,27 @@ class LockDetail(DeviceDetail):
             self._model = data["skuNumber"]
         self._data = data
 
-    @property
+    @cached_property
     def model(self):
         return self._model
 
-    @property
+    @cached_property
+    def doorbell(self) -> bool:
+        return self._data["Type"] in DOORMAN_MODEL_TYPES
+
+    @cached_property
+    def unlatch_supported(self) -> bool:
+        return self._data["Type"] in UNLATCH_MODEL_TYPES
+
+    @cached_property
     def battery_level(self):
         return self._battery_level
 
-    @property
+    @cached_property
     def keypad(self):
         return self._keypad_detail
 
-    @property
+    @cached_property
     def bridge(self):
         return self._bridge
 
@@ -141,7 +155,7 @@ class LockDetail(DeviceDetail):
 
         return False
 
-    @property
+    @cached_property
     def doorsense(self):
         return self._doorsense
 
@@ -201,39 +215,41 @@ class LockDetail(DeviceDetail):
         """Lookup user data by id."""
         return self._data.get("users", {}).get(user_id)
 
-    @property
+    @cached_property
     def offline_keys(self) -> dict:
         return self._data.get("OfflineKeys", {})
 
-    @property
-    def loaded_offline_keys(self) -> List[dict]:
+    @cached_property
+    def loaded_offline_keys(self) -> list[dict]:
         return self.offline_keys.get("loaded", [])
 
-    @property
-    def offline_key(self) -> Optional[str]:
+    @cached_property
+    def offline_key(self) -> str | None:
         loaded_offline_keys = self.loaded_offline_keys
         if loaded_offline_keys and "key" in loaded_offline_keys[0]:
             return loaded_offline_keys[0]["key"]
         return None
 
-    @property
-    def offline_slot(self) -> Optional[int]:
+    @cached_property
+    def offline_slot(self) -> int | None:
         loaded_offline_keys = self.loaded_offline_keys
         if loaded_offline_keys and "slot" in loaded_offline_keys[0]:
             return loaded_offline_keys[0]["slot"]
         return None
 
-    @property
-    def mac_address(self) -> Optional[str]:
+    @cached_property
+    def mac_address(self) -> str | None:
         mac = self._data.get("macAddress")
         return mac.upper() if mac else None
 
 
 class LockStatus(Enum):
     LOCKED = "locked"
+    UNLATCHED = "unlatched"
     UNLOCKED = "unlocked"
     UNKNOWN = "unknown"
     LOCKING = "locking"
+    UNLATCHING = "unlatching"
     UNLOCKING = "unlocking"
     JAMMED = "jammed"
 
@@ -248,8 +264,12 @@ class LockDoorStatus(Enum):
 def determine_lock_status(status):
     if status in LOCKED_STATUS:
         return LockStatus.LOCKED
+    if status in UNLATCHED_STATUS:
+        return LockStatus.UNLATCHED
     if status in UNLOCKED_STATUS:
         return LockStatus.UNLOCKED
+    if status in UNLATCHING_STATUS:
+        return LockStatus.UNLATCHING
     if status in UNLOCKING_STATUS:
         return LockStatus.UNLOCKING
     if status in LOCKING_STATUS:

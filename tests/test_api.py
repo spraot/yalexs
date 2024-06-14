@@ -1,13 +1,13 @@
-from datetime import datetime
 import os
 import unittest
+from datetime import datetime
 
 import dateutil.parser
+import requests_mock
 from dateutil.tz import tzlocal, tzutc
 from requests.exceptions import HTTPError
 from requests.models import Response
 from requests.structures import CaseInsensitiveDict
-import requests_mock
 
 import yalexs.activity
 from yalexs.api import Api, _raise_response_exceptions
@@ -21,9 +21,12 @@ from yalexs.api_common import (
     API_GET_PINS_URL,
     API_GET_USER_URL,
     API_LOCK_URL,
+    API_UNLATCH_URL,
     API_UNLOCK_URL,
+    ApiCommon,
 )
 from yalexs.bridge import BridgeDetail, BridgeStatus, BridgeStatusDetail
+from yalexs.const import DEFAULT_BRAND
 from yalexs.exceptions import AugustApiHTTPError
 from yalexs.lock import LockDoorStatus, LockStatus
 
@@ -45,7 +48,9 @@ class TestApi(unittest.TestCase):
     @requests_mock.Mocker()
     def test_get_doorbells(self, mock):
         mock.register_uri(
-            "get", API_GET_DOORBELLS_URL, text=load_fixture("get_doorbells.json")
+            "get",
+            ApiCommon(DEFAULT_BRAND).get_brand_url(API_GET_DOORBELLS_URL),
+            text=load_fixture("get_doorbells.json"),
         )
 
         api = Api()
@@ -61,6 +66,7 @@ class TestApi(unittest.TestCase):
         self.assertEqual(False, first.has_subscription)
         self.assertEqual(None, first.image_url)
         self.assertEqual("3dd2accadddd", first.house_id)
+        self.assertEqual("", first.content_token)
 
         second = doorbells[1]
         self.assertEqual("K98GiDT45GUL", second.device_id)
@@ -70,13 +76,16 @@ class TestApi(unittest.TestCase):
         self.assertEqual(True, second.has_subscription)
         self.assertEqual("https://image.com/vmk16naaaa7ibuey7sar.jpg", second.image_url)
         self.assertEqual("3dd2accaea08", second.house_id)
+        self.assertEqual("", second.content_token)
 
     @requests_mock.Mocker()
     def test_get_doorbell_detail(self, mock):
         expected_doorbell_image_url = "https://image.com/vmk16naaaa7ibuey7sar.jpg"
         mock.register_uri(
             "get",
-            API_GET_DOORBELL_URL.format(doorbell_id="K98GiDT45GUL"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_DOORBELL_URL)
+            .format(doorbell_id="K98GiDT45GUL"),
             text=load_fixture("get_doorbell.json"),
         )
         mock.register_uri(
@@ -111,7 +120,9 @@ class TestApi(unittest.TestCase):
     def test_get_doorbell_detail_missing_image(self, mock):
         mock.register_uri(
             "get",
-            API_GET_DOORBELL_URL.format(doorbell_id="K98GiDT45GUL"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_DOORBELL_URL)
+            .format(doorbell_id="K98GiDT45GUL"),
             text=load_fixture("get_doorbell_missing_image.json"),
         )
 
@@ -135,7 +146,9 @@ class TestApi(unittest.TestCase):
     def test_get_doorbell_offline(self, mock):
         mock.register_uri(
             "get",
-            API_GET_DOORBELL_URL.format(doorbell_id="231ee2168dd0"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_DOORBELL_URL)
+            .format(doorbell_id="231ee2168dd0"),
             text=load_fixture("get_doorbell.offline.json"),
         )
 
@@ -163,7 +176,9 @@ class TestApi(unittest.TestCase):
     def test_get_doorbell_gen2_full_battery_detail(self, mock):
         mock.register_uri(
             "get",
-            API_GET_DOORBELL_URL.format(doorbell_id="did"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_DOORBELL_URL)
+            .format(doorbell_id="did"),
             text=load_fixture("get_doorbell.battery_full.json"),
         )
 
@@ -176,7 +191,9 @@ class TestApi(unittest.TestCase):
     def test_get_doorbell_gen2_medium_battery_detail(self, mock):
         mock.register_uri(
             "get",
-            API_GET_DOORBELL_URL.format(doorbell_id="did"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_DOORBELL_URL)
+            .format(doorbell_id="did"),
             text=load_fixture("get_doorbell.battery_medium.json"),
         )
 
@@ -189,7 +206,9 @@ class TestApi(unittest.TestCase):
     def test_get_doorbell_gen2_low_battery_detail(self, mock):
         mock.register_uri(
             "get",
-            API_GET_DOORBELL_URL.format(doorbell_id="did"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_DOORBELL_URL)
+            .format(doorbell_id="did"),
             text=load_fixture("get_doorbell.battery_low.json"),
         )
 
@@ -200,7 +219,11 @@ class TestApi(unittest.TestCase):
 
     @requests_mock.Mocker()
     def test_get_locks(self, mock):
-        mock.register_uri("get", API_GET_LOCKS_URL, text=load_fixture("get_locks.json"))
+        mock.register_uri(
+            "get",
+            ApiCommon(DEFAULT_BRAND).get_brand_url(API_GET_LOCKS_URL),
+            text=load_fixture("get_locks.json"),
+        )
 
         api = Api()
         locks = sorted(api.get_locks(ACCESS_TOKEN), key=lambda d: d.device_id)
@@ -221,7 +244,11 @@ class TestApi(unittest.TestCase):
 
     @requests_mock.Mocker()
     def test_get_operable_locks(self, mock):
-        mock.register_uri("get", API_GET_LOCKS_URL, text=load_fixture("get_locks.json"))
+        mock.register_uri(
+            "get",
+            ApiCommon(DEFAULT_BRAND).get_brand_url(API_GET_LOCKS_URL),
+            text=load_fixture("get_locks.json"),
+        )
 
         api = Api()
         locks = api.get_operable_locks(ACCESS_TOKEN)
@@ -238,7 +265,9 @@ class TestApi(unittest.TestCase):
     def test_get_lock_detail_with_doorsense_bridge_online(self, mock):
         mock.register_uri(
             "get",
-            API_GET_LOCK_URL.format(lock_id="ABC"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_URL)
+            .format(lock_id="ABC"),
             text=load_fixture("get_lock.online_with_doorsense.json"),
         )
 
@@ -273,7 +302,9 @@ class TestApi(unittest.TestCase):
     def test_get_lock_detail_bridge_online(self, mock):
         mock.register_uri(
             "get",
-            API_GET_LOCK_URL.format(lock_id="A6697750D607098BAE8D6BAA11EF8063"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_URL)
+            .format(lock_id="A6697750D607098BAE8D6BAA11EF8063"),
             text=load_fixture("get_lock.online.json"),
         )
 
@@ -336,7 +367,9 @@ class TestApi(unittest.TestCase):
     def test_get_lock_detail_doorsense_init_state(self, mock):
         mock.register_uri(
             "get",
-            API_GET_LOCK_URL.format(lock_id="A6697750D607098BAE8D6BAA11EF8063"),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_URL)
+            .format(lock_id="A6697750D607098BAE8D6BAA11EF8063"),
             text=load_fixture("get_lock.doorsense_init.json"),
         )
 
@@ -410,7 +443,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"status": "kAugLockState_Locked"}',
         )
 
@@ -424,7 +459,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"status": "kAugLockState_Locked"'
             ',"doorState": "kAugLockDoorState_Closed"}',
         )
@@ -436,11 +473,29 @@ class TestApi(unittest.TestCase):
         self.assertEqual(LockDoorStatus.CLOSED, door_status)
 
     @requests_mock.Mocker()
+    def test_get_lock_status_with_unlatched_response(self, mock):
+        lock_id = 1234
+        mock.register_uri(
+            "get",
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
+            text='{"status": "kAugLockState_Unlatched"}',
+        )
+
+        api = Api()
+        status = api.get_lock_status(ACCESS_TOKEN, lock_id)
+
+        self.assertEqual(LockStatus.UNLATCHED, status)
+
+    @requests_mock.Mocker()
     def test_get_lock_status_with_unlocked_response(self, mock):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"status": "kAugLockState_Unlocked"}',
         )
 
@@ -454,7 +509,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"status": "not_advertising"}',
         )
 
@@ -468,7 +525,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"doorState": "kAugLockDoorState_Closed"}',
         )
 
@@ -482,7 +541,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"doorState": "kAugLockDoorState_Open"}',
         )
 
@@ -496,7 +557,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"status": "kAugLockState_Unlocked"'
             ',"doorState": "kAugLockDoorState_Open"}',
         )
@@ -512,7 +575,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_LOCK_STATUS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_LOCK_STATUS_URL)
+            .format(lock_id=lock_id),
             text='{"doorState": "not_advertising"}',
         )
 
@@ -525,7 +590,11 @@ class TestApi(unittest.TestCase):
     def test_lock_from_fixture(self, mock):
         lock_id = 1234
         mock.register_uri(
-            "put", API_LOCK_URL.format(lock_id=lock_id), text=load_fixture("lock.json")
+            "put",
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_LOCK_URL)
+            .format(lock_id=lock_id),
+            text=load_fixture("lock.json"),
         )
 
         api = Api()
@@ -538,7 +607,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "put",
-            API_UNLOCK_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_UNLOCK_URL)
+            .format(lock_id=lock_id),
             text=load_fixture("unlock.json"),
         )
 
@@ -551,7 +622,11 @@ class TestApi(unittest.TestCase):
     def test_lock_return_activities_from_fixture(self, mock):
         lock_id = 1234
         mock.register_uri(
-            "put", API_LOCK_URL.format(lock_id=lock_id), text=load_fixture("lock.json")
+            "put",
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_LOCK_URL)
+            .format(lock_id=lock_id),
+            text=load_fixture("lock.json"),
         )
 
         api = Api()
@@ -581,7 +656,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "put",
-            API_UNLOCK_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_UNLOCK_URL)
+            .format(lock_id=lock_id),
             text=load_fixture("unlock.json"),
         )
 
@@ -612,7 +689,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "put",
-            API_LOCK_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_LOCK_URL)
+            .format(lock_id=lock_id),
             text=load_fixture("lock_without_doorstate.json"),
         )
 
@@ -637,7 +716,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "put",
-            API_UNLOCK_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_UNLOCK_URL)
+            .format(lock_id=lock_id),
             text=load_fixture("unlock_without_doorstate.json"),
         )
 
@@ -662,7 +743,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "put",
-            API_LOCK_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_LOCK_URL)
+            .format(lock_id=lock_id),
             text='{"status":"locked",'
             '"dateTime":"2017-12-10T07:43:39.056Z",'
             '"isLockStatusChanged":false,'
@@ -675,10 +758,30 @@ class TestApi(unittest.TestCase):
         self.assertEqual(LockStatus.LOCKED, status)
 
     @requests_mock.Mocker()
+    def test_unlatch(self, mock):
+        lock_id = 1234
+        mock.register_uri(
+            "put",
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_UNLATCH_URL)
+            .format(lock_id=lock_id),
+            text='{"status": "unlatched"}',
+        )
+
+        api = Api()
+        status = api.unlatch(ACCESS_TOKEN, lock_id)
+
+        self.assertEqual(LockStatus.UNLATCHED, status)
+
+    @requests_mock.Mocker()
     def test_unlock(self, mock):
         lock_id = 1234
         mock.register_uri(
-            "put", API_UNLOCK_URL.format(lock_id=lock_id), text='{"status": "unlocked"}'
+            "put",
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_UNLOCK_URL)
+            .format(lock_id=lock_id),
+            text='{"status": "unlocked"}',
         )
 
         api = Api()
@@ -691,7 +794,9 @@ class TestApi(unittest.TestCase):
         lock_id = 1234
         mock.register_uri(
             "get",
-            API_GET_PINS_URL.format(lock_id=lock_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_PINS_URL)
+            .format(lock_id=lock_id),
             text=load_fixture("get_pins.json"),
         )
 
@@ -723,7 +828,9 @@ class TestApi(unittest.TestCase):
         house_id = 1234
         mock.register_uri(
             "get",
-            API_GET_HOUSE_ACTIVITIES_URL.format(house_id=house_id),
+            ApiCommon(DEFAULT_BRAND)
+            .get_brand_url(API_GET_HOUSE_ACTIVITIES_URL)
+            .format(house_id=house_id),
             text=load_fixture("get_house_activities.json"),
         )
 
@@ -788,7 +895,7 @@ class TestApi(unittest.TestCase):
     def test_get_user(self, mock):
         mock.register_uri(
             "get",
-            API_GET_USER_URL,
+            ApiCommon(DEFAULT_BRAND).get_brand_url(API_GET_USER_URL),
             text='{"UserID": "abc"}',
         )
 
@@ -800,7 +907,7 @@ class TestApi(unittest.TestCase):
 class MockedResponse(Response):
     def __init__(self, *args, **kwargs):
         content = kwargs.pop("content", None)
-        super(MockedResponse, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self._mocked_content = content
 
     @property

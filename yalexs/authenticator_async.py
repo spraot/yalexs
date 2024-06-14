@@ -1,12 +1,15 @@
-from datetime import datetime, timedelta, timezone
+from __future__ import annotations
+
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 import aiofiles
 from aiohttp import ClientError
 
-from yalexs.authenticator_common import (
+from .api_async import ApiAsync
+from .authenticator_common import (
     Authentication,
     AuthenticationState,
     AuthenticatorCommon,
@@ -14,15 +17,17 @@ from yalexs.authenticator_common import (
     from_authentication_json,
     to_authentication_json,
 )
+from .exceptions import AugustApiAIOHTTPError
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class AuthenticatorAsync(AuthenticatorCommon):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    """Class to manage authentication with the August API."""
 
-    async def async_setup_authentication(self):
+    _api: ApiAsync
+
+    async def async_setup_authentication(self) -> None:
         access_token_cache_file = self._access_token_cache_file
         if access_token_cache_file is not None and os.path.exists(
             access_token_cache_file
@@ -68,7 +73,7 @@ class AuthenticatorAsync(AuthenticatorCommon):
             AuthenticationState.REQUIRES_AUTHENTICATION, install_id=self._install_id
         )
 
-    async def async_authenticate(self):
+    async def async_authenticate(self) -> Authentication:
         if self._authentication.state == AuthenticationState.AUTHENTICATED:
             return self._authentication
 
@@ -88,7 +93,9 @@ class AuthenticatorAsync(AuthenticatorCommon):
 
         return authentication
 
-    async def async_validate_verification_code(self, verification_code):
+    async def async_validate_verification_code(
+        self, verification_code: str
+    ) -> ValidationResult:
         if not verification_code:
             return ValidationResult.INVALID_VERIFICATION_CODE
 
@@ -99,19 +106,19 @@ class AuthenticatorAsync(AuthenticatorCommon):
                 self._username,
                 verification_code,
             )
-        except ClientError:
+        except (AugustApiAIOHTTPError, ClientError):
             return ValidationResult.INVALID_VERIFICATION_CODE
 
         return ValidationResult.VALIDATED
 
-    async def async_send_verification_code(self):
+    async def async_send_verification_code(self) -> bool:
         await self._api.async_send_verification_code(
             self._authentication.access_token, self._login_method, self._username
         )
 
         return True
 
-    async def async_refresh_access_token(self, force=False):
+    async def async_refresh_access_token(self, force=False) -> Authentication | None:
         if not self.should_refresh() and not force:
             return self._authentication
 
@@ -127,7 +134,7 @@ class AuthenticatorAsync(AuthenticatorCommon):
         await self._async_cache_authentication(authentication)
         return authentication
 
-    async def _async_cache_authentication(self, authentication):
+    async def _async_cache_authentication(self, authentication: Authentication) -> None:
         if self._access_token_cache_file is not None:
             async with aiofiles.open(self._access_token_cache_file, "w") as file:
                 await file.write(to_authentication_json(authentication))

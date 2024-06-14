@@ -1,5 +1,7 @@
 """Api calls for sync."""
 
+from __future__ import annotations
+
 import json
 import logging
 import time
@@ -7,10 +9,11 @@ import time
 from requests import Session, request
 from requests.exceptions import HTTPError
 
-from yalexs.api_common import (
+from .api_common import (
     API_LOCK_URL,
     API_RETRY_ATTEMPTS,
     API_RETRY_TIME,
+    API_UNLATCH_URL,
     API_UNLOCK_URL,
     HEADER_ACCEPT_VERSION,
     HEADER_AUGUST_ACCESS_TOKEN,
@@ -21,19 +24,29 @@ from yalexs.api_common import (
     _process_doorbells_json,
     _process_locks_json,
 )
-from yalexs.doorbell import DoorbellDetail
-from yalexs.exceptions import AugustApiHTTPError
-from yalexs.lock import LockDetail, determine_door_state, determine_lock_status
-from yalexs.pin import Pin
+from .const import DEFAULT_BRAND
+from .doorbell import DoorbellDetail
+from .exceptions import AugustApiHTTPError
+from .lock import LockDetail, determine_door_state, determine_lock_status
+from .pin import Pin
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class Api(ApiCommon):
-    def __init__(self, timeout=10, command_timeout=60, http_session: Session = None):
+    """Legacy sync api."""
+
+    def __init__(
+        self,
+        timeout=10,
+        command_timeout=60,
+        http_session: Session = None,
+        brand=DEFAULT_BRAND,
+    ) -> None:
         self._timeout = timeout
         self._command_timeout = command_timeout
         self._http_session = http_session
+        super().__init__(brand)
 
     def get_session(self, install_id, identifier, password):
         return self._dict_to_api(
@@ -171,6 +184,26 @@ class Api(ApiCommon):
         """
         return _convert_lock_result_to_activities(self._lock(access_token, lock_id))
 
+    def _unlatch(self, access_token, lock_id):
+        return self._call_lock_operation(API_UNLATCH_URL, access_token, lock_id)
+
+    def unlatch(self, access_token, lock_id):
+        """Execute a remote unlatch operation.
+
+        Returns a LockStatus state.
+        """
+        return determine_lock_status(self._unlatch(access_token, lock_id).get("status"))
+
+    def unlatch_return_activities(self, access_token, lock_id):
+        """Execute a remote lock operation.
+
+        Returns an array of one or more yalexs.activity.Activity objects
+
+        If the lock supports door sense one of the activities
+        will include the current door state.
+        """
+        return _convert_lock_result_to_activities(self._unlatch(access_token, lock_id))
+
     def _unlock(self, access_token, lock_id):
         return self._call_lock_operation(API_UNLOCK_URL, access_token, lock_id)
 
@@ -209,7 +242,9 @@ class Api(ApiCommon):
         payload = api_dict.get("params") or api_dict.get("json")
 
         if "headers" not in api_dict:
-            api_dict["headers"] = _api_headers(access_token=access_token)
+            api_dict["headers"] = _api_headers(
+                access_token=access_token, brand=self.brand
+            )
 
         if "version" in api_dict:
             api_dict["headers"][HEADER_ACCEPT_VERSION] = api_dict["version"]

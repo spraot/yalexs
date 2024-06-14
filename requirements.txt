@@ -1,5 +1,0 @@
-requests
-aiofiles
-aiohttp
-vol
-python-dateutil

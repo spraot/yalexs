@@ -1,8 +1,10 @@
+import datetime
 import json
 import os
 import unittest
 
 import dateutil.parser
+from dateutil.tz import tzlocal
 
 from yalexs.activity import (
     ActivityType,
@@ -38,6 +40,33 @@ class TestLockDetail(unittest.TestCase):
         self.assertEqual("A6697750D607098BAE8D6BAA11EF8063", lock.device_id)
         self.assertEqual(LockStatus.LOCKED, lock.lock_status)
         self.assertEqual(LockDoorStatus.DISABLED, lock.door_state)
+
+        activities = activities_from_pubnub_message(
+            lock,
+            dateutil.parser.parse("2017-12-10T05:48:30.272Z"),
+            {
+                "remoteEvent": 1,
+                "status": "kAugLockState_Unlatching",
+                "info": {
+                    "action": "unlock",
+                    "startTime": "2021-03-20T18:19:05.373Z",
+                    "context": {
+                        "transactionID": "_oJRZKJsx",
+                        "startDate": "2021-03-20T18:19:05.371Z",
+                        "retryCount": 1,
+                    },
+                    "lockType": "lock_version_1001",
+                    "serialNumber": "M1FBA029QJ",
+                    "rssi": -53,
+                    "wlanRSSI": -55,
+                    "wlanSNR": 44,
+                    "duration": 2534,
+                },
+            },
+        )
+        assert isinstance(activities[0], LockOperationActivity)
+        assert "LockOperationActivity" in str(activities[0])
+        assert activities[0].action == "unlatching"
 
         activities = activities_from_pubnub_message(
             lock,
@@ -117,6 +146,9 @@ class TestLockDetail(unittest.TestCase):
             },
         )
         assert isinstance(activities[0], LockOperationActivity)
+        assert activities[0].activity_start_time == dateutil.parser.parse(
+            "2021-03-20T18:19:06.372Z"
+        ).astimezone(tz=tzlocal()).replace(tzinfo=None)
         assert "LockOperationActivity" in str(activities[0])
         assert activities[0].action == "jammed"
 
@@ -145,6 +177,9 @@ class TestLockDetail(unittest.TestCase):
         )
         assert isinstance(activities[0], LockOperationActivity)
         assert "LockOperationActivity" in str(activities[0])
+        assert activities[0].activity_start_time == dateutil.parser.parse(
+            "2021-03-20T18:19:06.372Z"
+        ).astimezone(tz=tzlocal()).replace(tzinfo=None)
         assert activities[0].action == "unlock"
 
         activities = activities_from_pubnub_message(
@@ -193,8 +228,10 @@ class TestLockDetail(unittest.TestCase):
         )
         assert isinstance(activities[0], LockOperationActivity)
         assert activities[0].action == "lock"
-        assert activities[0].operated_by == "Foo Bar"
-        assert activities[0].activity_type == ActivityType.LOCK_OPERATION
+        assert activities[0].operated_by is None
+        assert (
+            activities[0].activity_type == ActivityType.LOCK_OPERATION_WITHOUT_OPERATOR
+        )
         assert isinstance(activities[1], DoorOperationActivity)
         assert activities[1].action == "doorclosed"
 
@@ -256,12 +293,112 @@ class TestLockDetail(unittest.TestCase):
                 "status": "unlocked",
                 "callingUserID": "5309b78d-de0c-4ec5-b878-02784c3b598a",
                 "doorState": "closed",
+                "info": {
+                    "action": "unlock",
+                    "startTime": "2017-12-10T05:48:30.272Z",
+                    "context": {
+                        "transactionID": "_oJRZKJsx",
+                        "startDate": "2017-12-10T05:48:30.272Z",
+                        "retryCount": 1,
+                    },
+                    "lockType": "lock_version_1001",
+                    "serialNumber": "M1FBA029QJ",
+                    "rssi": -53,
+                    "wlanRSSI": -55,
+                    "wlanSNR": 44,
+                    "duration": 2534,
+                },
             },
         )
         assert isinstance(activities[0], LockOperationActivity)
         assert "LockOperationActivity" in str(activities[0])
         assert activities[0].action == "unlock"
         assert activities[0].operated_by == "bob smith"
+
+        activities = activities_from_pubnub_message(
+            lock,
+            datetime.datetime.fromtimestamp(16844292526891571 / 1000000),
+            {
+                "status": "unlatched",
+                "callingUserID": "manualunlatch",
+                "doorState": "open",
+            },
+        )
+        assert isinstance(activities[0], LockOperationActivity)
+        assert "LockOperationActivity" in str(activities[0])
+        assert activities[0].action == "unlatch"
+        assert (
+            activities[0].activity_type is ActivityType.LOCK_OPERATION_WITHOUT_OPERATOR
+        )
+        assert activities[0].operated_by is None
+
+        activities = activities_from_pubnub_message(
+            lock,
+            datetime.datetime.fromtimestamp(16844292526891571 / 1000000),
+            {
+                "status": "unlocked",
+                "callingUserID": "manualunlock",
+                "doorState": "open",
+            },
+        )
+        assert isinstance(activities[0], LockOperationActivity)
+        assert "LockOperationActivity" in str(activities[0])
+        assert activities[0].action == "unlock"
+        assert (
+            activities[0].activity_type is ActivityType.LOCK_OPERATION_WITHOUT_OPERATOR
+        )
+        assert activities[0].operated_by is None
+
+        activities = activities_from_pubnub_message(
+            lock,
+            datetime.datetime.fromtimestamp(16844299539729015 / 1000000),
+            {
+                "status": "locked",
+                "callingUserID": "manuallock",
+                "doorState": "open",
+            },
+        )
+        assert isinstance(activities[0], LockOperationActivity)
+        assert "LockOperationActivity" in str(activities[0])
+        assert activities[0].action == "lock"
+        assert (
+            activities[0].activity_type is ActivityType.LOCK_OPERATION_WITHOUT_OPERATOR
+        )
+        assert activities[0].operated_by is None
+
+        # status polls should not create activities
+        activities = activities_from_pubnub_message(
+            lock,
+            dateutil.parser.parse("2017-12-10T05:48:30.272Z"),
+            {
+                "remoteEvent": 1,
+                "status": "kAugLockState_Locked",
+                "info": {
+                    "action": "status",
+                    "startTime": "2024-02-15T07:33:50.804Z",
+                    "context": {
+                        "transactionID": "RP99lHGUIx",
+                        "startDate": "2024-02-15T07:33:50.793Z",
+                        "retryCount": 1,
+                    },
+                    "lockType": "lock_version_17",
+                    "serialNumber": "L.....",
+                    "rssi": 0,
+                    "wlanRSSI": -35,
+                    "wlanSNR": -1,
+                    "duration": 991,
+                    "lockID": "AF5EFD84.....",
+                    "bridgeID": "652e35ba7e.....",
+                    "serial": "L.....",
+                },
+                "doorState": "kAugDoorState_Closed",
+                "retryCount": 1,
+                "totalTime": 1028,
+                "resultsFromOperationCache": False,
+            },
+        )
+
+        assert len(activities) == 0
 
 
 class TestDetail(unittest.TestCase):
@@ -374,3 +511,38 @@ class TestDetail(unittest.TestCase):
         )
         assert isinstance(activities[0], DoorbellDingActivity)
         assert "DoorbellDingActivity" in str(activities[0])
+
+
+class TestBridge(unittest.TestCase):
+    def test_update_bridge_details_from_pubnub_message(self):
+        lock = LockDetail(json.loads(load_fixture("get_lock.doorsense_init.json")))
+        self.assertEqual("A6697750D607098BAE8D6BAA11EF8063", lock.device_id)
+        self.assertEqual(LockStatus.LOCKED, lock.lock_status)
+        self.assertEqual(LockDoorStatus.DISABLED, lock.door_state)
+
+        activities = activities_from_pubnub_message(
+            lock,
+            dateutil.parser.parse("2017-12-10T05:48:30.272Z"),
+            {
+                "remoteEvent": 1,
+                "status": "unknown",
+                "result": "failed",
+                "error": {
+                    "jse_shortmsg": "",
+                    "jse_info": {},
+                    "message": "Bridge is offline",
+                    "statusCode": 422,
+                    "body": {"code": 98, "message": "Bridge is offline"},
+                    "restCode": 98,
+                    "name": "ERRNO_BRIDGE_OFFLINE",
+                    "code": "Error",
+                },
+                "info": {
+                    "lockID": "45E3635D35B9471FAF1218885816E90D",
+                    "action": "status",
+                },
+            },
+        )
+        assert isinstance(activities[0], BridgeOperationActivity)
+        assert "BridgeOperationActivity" in str(activities[0])
+        assert activities[0].action == "associated_bridge_offline"

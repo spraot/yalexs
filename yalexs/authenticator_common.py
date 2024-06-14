@@ -1,13 +1,16 @@
-from datetime import datetime, timedelta, timezone
-from enum import Enum
+from __future__ import annotations
+
 import json
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
+from enum import Enum
+from typing import Any
 
-import dateutil.parser
 import jwt
 
-from yalexs.api import HEADER_AUGUST_ACCESS_TOKEN
+from .api import HEADER_AUGUST_ACCESS_TOKEN, ApiCommon
+from .time import parse_datetime
 
 # The default time before expiration to refresh a token
 DEFAULT_RENEWAL_THRESHOLD = timedelta(days=7)
@@ -50,7 +53,7 @@ class Authentication:
         self._access_token_expires = access_token_expires
         self._parsed_expiration_time = None
         if access_token_expires:
-            self._parsed_expiration_time = dateutil.parser.parse(access_token_expires)
+            self._parsed_expiration_time = parse_datetime(access_token_expires)
 
     @property
     def install_id(self):
@@ -94,14 +97,14 @@ class ValidationResult(Enum):
 class AuthenticatorCommon:
     def __init__(
         self,
-        api,
-        login_method,
-        username,
-        password,
-        install_id=None,
-        access_token_cache_file=None,
-        access_token_renewal_threshold=DEFAULT_RENEWAL_THRESHOLD,
-    ):
+        api: ApiCommon,
+        login_method: str,
+        username: str,
+        password: str,
+        install_id: str | None = None,
+        access_token_cache_file: str | None = None,
+        access_token_renewal_threshold: timedelta = DEFAULT_RENEWAL_THRESHOLD,
+    ) -> None:
         self._api = api
         self._login_method = login_method
         self._username = username
@@ -112,8 +115,11 @@ class AuthenticatorCommon:
         self._authentication = None
 
     def _authentication_from_session_response(
-        self, install_id, response_headers, json_dict
-    ):
+        self,
+        install_id: str,
+        response_headers: dict[str, Any],
+        json_dict: dict[str, Any],
+    ) -> Authentication:
         access_token = response_headers[HEADER_AUGUST_ACCESS_TOKEN]
         access_token_expires = json_dict["expiresAt"]
         v_password = json_dict["vPassword"]
@@ -150,7 +156,7 @@ class AuthenticatorCommon:
         # '%Y-%m-%dT%H:%M:%S.%fZ'
         # from the get_session api call
         # It is important we store access_token_expires formatted
-        # the same way for compatbility
+        # the same way for compatibility
         self._authentication = Authentication(
             self._authentication.state,
             install_id=self._authentication.install_id,
